@@ -1,8 +1,8 @@
-use glam::vec2;
-use wgpu::util::DeviceExt;
+use glam::{vec2, Vec2};
+use wgpu::{util::DeviceExt, PushConstantRange, ShaderStages};
 
-const GRID_SIZE_X: usize = 10;
-const GRID_SIZE_Y: usize = 10;
+const GRID_SIZE_X: usize = 20;
+const GRID_SIZE_Y: usize = 20;
 const VELOCITY_BUFFER_SIZE: usize = GRID_SIZE_X * GRID_SIZE_Y * std::mem::size_of::<glam::Vec2>();
 pub struct VelocityFieldRoutine {
     render_pipeline: wgpu::RenderPipeline,
@@ -11,6 +11,8 @@ pub struct VelocityFieldRoutine {
     index_buffer: wgpu::Buffer,
     _velocity_buffer: wgpu::Buffer,
     _constants_buffer: wgpu::Buffer,
+
+    pub forced_velocity: Vec2,
 }
 
 #[derive(Clone, Copy)]
@@ -142,7 +144,10 @@ impl VelocityFieldRoutine {
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("velocity_field_pipeline_layout"),
             bind_group_layouts: &[&uniform_bind_group_layout],
-            push_constant_ranges: &[],
+            push_constant_ranges: &[PushConstantRange {
+                stages: ShaderStages::VERTEX,
+                range: 0..std::mem::size_of::<Vec2>() as u32,
+            }],
         });
 
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -223,6 +228,7 @@ impl VelocityFieldRoutine {
             index_buffer,
             _velocity_buffer: velocity_buffer,
             _constants_buffer: constants_buffer,
+            forced_velocity: vec2(0.0, 0.0),
         }
     }
 
@@ -256,6 +262,11 @@ impl VelocityFieldRoutine {
 
                 pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+                pass.set_push_constants(
+                    ShaderStages::VERTEX,
+                    0,
+                    bytemuck::cast_slice(&[self.forced_velocity]),
+                );
                 pass.draw_indexed(0..6, 0, 0..(GRID_SIZE_X * GRID_SIZE_Y) as u32);
 
                 pass.pop_debug_group();

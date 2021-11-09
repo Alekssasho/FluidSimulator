@@ -10,26 +10,44 @@ struct VSOutput {
 static const float PI = 3.14159265f;
 
 struct ConstantsData {
-    uint grid_size_x;
-    uint grid_size_y;
+    uint2 grid_size;
 };
+
+struct PushConstantData {
+    float2 forced_velocity;
+};
+
+[[vk::push_constant]] PushConstantData g_push_data;
 
 ConstantBuffer<ConstantsData> g_constant_data : register(b0);
 StructuredBuffer<float2> g_velocity_field : register(t1);
 
 VSOutput vs_main(VSInput input) {
-    const uint2 grid_position = uint2(input.instance_id % g_constant_data.grid_size_x, input.instance_id / g_constant_data.grid_size_y);
+    //const float2 velocity = g_velocity_field[input.instance_id];
+    const float2 velocity = g_push_data.forced_velocity;
+    const float velocity_magnitude = length(velocity);
+    if(velocity_magnitude == 0.0) {
+        // Output degenerate triangle
+        VSOutput output;
+        output.position = 0.0;
+        return output;
+    }
 
-    float2 grid_position_float = grid_position / float2(g_constant_data.grid_size_x, g_constant_data.grid_size_y);
-    grid_position_float = grid_position_float * 2.0 - 1.0;
-    const float2 half_grid_position_offset = float2(1.0 / g_constant_data.grid_size_x, 1.0 / g_constant_data.grid_size_y);
+    const float2 velocity_direction = velocity / velocity_magnitude;
 
+    const float2x2 rotate_matrix = float2x2(velocity_direction.y, velocity_direction.x, -velocity_direction.x, velocity_direction.y);
+    const float2 vertex_rotated_position = mul(rotate_matrix, input.position * (velocity_magnitude / 1.5));
 
-    const float2x2 rotate = float2x2(sin(PI / 4.0), cos(PI / 4.0), cos(PI / 4.0), -sin(PI / 4.0));
-    const float2 position = mul(rotate, input.position) * half_grid_position_offset + half_grid_position_offset + grid_position_float;
+    const uint2 grid_position = uint2(input.instance_id % g_constant_data.grid_size.x, input.instance_id / g_constant_data.grid_size.y);
+
+    const float2 grid_position_float = grid_position / float2(g_constant_data.grid_size);
+    const float2 vertex_rotated_position_in_grid_space = (vertex_rotated_position + 1.0) / 2.0;
+    const float2 final_vertex_position_in_grid_space = (vertex_rotated_position_in_grid_space * 1.0 / float2(g_constant_data.grid_size)) + grid_position_float;
+
+    const float2 final_position_in_ndc_space = final_vertex_position_in_grid_space * 2.0 - 1.0;
 
     VSOutput output;
-    output.position = float4(position, 0.0, 1.0);
+    output.position = float4(final_position_in_ndc_space, 0.0, 1.0);
     return output;
 }
 

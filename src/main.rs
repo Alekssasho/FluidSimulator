@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Instant};
 
 use egui_winit_platform::{Platform, PlatformDescriptor};
 use glam::UVec2;
-use winit::{event::Event::*, event_loop::ControlFlow};
+use winit::{dpi::LogicalSize, event::Event::*, event_loop::ControlFlow};
 
 mod velocity_field_routine;
 
@@ -12,6 +12,10 @@ fn main() {
     let window = {
         let mut builder = winit::window::WindowBuilder::new();
         builder = builder.with_title("Fluid Simulator");
+        builder = builder.with_inner_size(LogicalSize{
+            width: 1920,
+            height: 1080,
+        });
         builder.build(&event_loop).expect("Could not build window")
     };
 
@@ -93,7 +97,20 @@ fn main() {
                 let ctx = platform.context();
                 egui::Window::new("Settings")
                     .resizable(true)
-                    .show(&ctx, |_ui| {});
+                    .show(&ctx, |ui| {
+                        ui.add(
+                            egui::DragValue::new(&mut velocity_field_routine.forced_velocity.x)
+                                .speed(0.05)
+                                .clamp_range(-1.0..=1.0)
+                                .prefix("x:"),
+                        );
+                        ui.add(
+                            egui::DragValue::new(&mut velocity_field_routine.forced_velocity.y)
+                                .speed(0.05)
+                                .clamp_range(-1.0..=1.0)
+                                .prefix("y:"),
+                        );
+                    });
 
                 // End the UI frame. Now let's draw the UI with our Backend, we could also handle the output here
                 let (_output, paint_commands) = platform.end_frame(Some(&window));
