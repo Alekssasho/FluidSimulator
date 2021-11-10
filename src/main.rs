@@ -12,7 +12,7 @@ fn main() {
     let window = {
         let mut builder = winit::window::WindowBuilder::new();
         builder = builder.with_title("Fluid Simulator");
-        builder = builder.with_inner_size(LogicalSize{
+        builder = builder.with_inner_size(LogicalSize {
             width: 1920,
             height: 1080,
         });

@@ -13,18 +13,11 @@ struct ConstantsData {
     uint2 grid_size;
 };
 
-struct PushConstantData {
-    float2 forced_velocity;
-};
-
-[[vk::push_constant]] PushConstantData g_push_data;
-
 ConstantBuffer<ConstantsData> g_constant_data : register(b0);
 StructuredBuffer<float2> g_velocity_field : register(t1);
 
 VSOutput vs_main(VSInput input) {
-    //const float2 velocity = g_velocity_field[input.instance_id];
-    const float2 velocity = g_push_data.forced_velocity;
+    const float2 velocity = g_velocity_field[input.instance_id];
     const float velocity_magnitude = length(velocity);
     if(velocity_magnitude == 0.0) {
         // Output degenerate triangle

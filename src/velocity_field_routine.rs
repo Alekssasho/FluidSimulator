@@ -1,12 +1,14 @@
 use glam::{vec2, Vec2};
-use wgpu::{util::DeviceExt, PushConstantRange, ShaderStages};
+use wgpu::{util::DeviceExt, ComputePipelineDescriptor, PushConstantRange, ShaderStages};
 
 const GRID_SIZE_X: usize = 20;
 const GRID_SIZE_Y: usize = 20;
 const VELOCITY_BUFFER_SIZE: usize = GRID_SIZE_X * GRID_SIZE_Y * std::mem::size_of::<glam::Vec2>();
 pub struct VelocityFieldRoutine {
     render_pipeline: wgpu::RenderPipeline,
+    compute_pipeline: wgpu::ComputePipeline,
     uniform_bind_group: wgpu::BindGroup,
+    compute_uniform_bind_group: wgpu::BindGroup,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     _velocity_buffer: wgpu::Buffer,
@@ -62,6 +64,24 @@ impl VelocityFieldRoutine {
             };
         let ps_code = ps_result.get_result().unwrap().to_vec();
 
+        let blob = library
+            .create_blob_with_encoding_from_str(include_str!("shaders/velocity_calculations.hlsl"))
+            .unwrap();
+        let cs_result =
+            match compiler.compile(&blob, "Shader", "cs_main", "cs_6_6", &["-spirv"], None, &[]) {
+                Ok(result) => result,
+                Err(result) => {
+                    let error_blob = result
+                        .0
+                        .get_error_buffer()
+                        .map_err(hassle_rs::utils::HassleError::Win32Error)
+                        .unwrap();
+                    println!("{}", library.get_blob_as_string(&error_blob));
+                    panic!();
+                }
+            };
+        let cs_code = cs_result.get_result().unwrap().to_vec();
+
         let device: &wgpu::Device = &renderer.device;
         let vs_shader = wgpu::ShaderModuleDescriptor {
             label: Some("velocity_field_vs_shader"),
@@ -74,6 +94,12 @@ impl VelocityFieldRoutine {
             source: wgpu::util::make_spirv(ps_code.as_slice()),
         };
         let ps_module = device.create_shader_module(&ps_shader);
+
+        let cs_shader = wgpu::ShaderModuleDescriptor {
+            label: Some("velocity_calculation_cs_shader"),
+            source: wgpu::util::make_spirv(cs_code.as_slice()),
+        };
+        let cs_module = device.create_shader_module(&cs_shader);
 
         let velocity_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("velocity_field_velocity_buffer"),
@@ -141,14 +167,71 @@ impl VelocityFieldRoutine {
             ],
         });
 
+        let compute_uniform_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("compute_velocity_field_bind_group_layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                            ty: wgpu::BufferBindingType::Uniform,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        },
+                        count: None,
+                    },
+                ],
+            });
+
+        let compute_uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("compute_velocity_field_bind_group"),
+            layout: &compute_uniform_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &constants_buffer,
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &velocity_buffer,
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+            ],
+        });
+
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("velocity_field_pipeline_layout"),
             bind_group_layouts: &[&uniform_bind_group_layout],
-            push_constant_ranges: &[PushConstantRange {
-                stages: ShaderStages::VERTEX,
-                range: 0..std::mem::size_of::<Vec2>() as u32,
-            }],
+            push_constant_ranges: &[],
         });
+
+        let compute_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("velocity_field_compute_pipeline_layout"),
+                bind_group_layouts: &[&compute_uniform_bind_group_layout],
+                push_constant_ranges: &[PushConstantRange {
+                    stages: ShaderStages::COMPUTE,
+                    range: 0..std::mem::size_of::<Vec2>() as u32,
+                }],
+            });
 
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("velocity_field_pipeline"),
@@ -200,6 +283,13 @@ impl VelocityFieldRoutine {
             }),
         });
 
+        let compute_pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
+            label: Some("velocity_calculcation_pipeline"),
+            layout: Some(&compute_pipeline_layout),
+            module: &cs_module,
+            entry_point: "cs_main",
+        });
+
         let vertex_positions = [
             vec2(-0.5, -1.0),
             vec2(0.5, -1.0),
@@ -223,7 +313,9 @@ impl VelocityFieldRoutine {
 
         Self {
             render_pipeline,
+            compute_pipeline,
             uniform_bind_group,
+            compute_uniform_bind_group,
             vertex_buffer,
             index_buffer,
             _velocity_buffer: velocity_buffer,
@@ -242,6 +334,19 @@ impl VelocityFieldRoutine {
                 let encoder = encoder_or_pass.get_encoder();
 
                 let output = graph_data.get_render_target(output_handle);
+
+                let mut c_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("velocity_calculation_compute_pass"),
+                });
+
+                c_pass.push_debug_group("velocity_calculation_compute");
+                c_pass.set_pipeline(&self.compute_pipeline);
+                c_pass.set_bind_group(0, &self.compute_uniform_bind_group, &[]);
+                c_pass.set_push_constants(0, bytemuck::cast_slice(&[self.forced_velocity]));
+                c_pass.dispatch((VELOCITY_BUFFER_SIZE as u32 + 31) / 32, 1, 1);
+                c_pass.pop_debug_group();
+
+                drop(c_pass);
 
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     color_attachments: &[wgpu::RenderPassColorAttachment {
@@ -262,11 +367,6 @@ impl VelocityFieldRoutine {
 
                 pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-                pass.set_push_constants(
-                    ShaderStages::VERTEX,
-                    0,
-                    bytemuck::cast_slice(&[self.forced_velocity]),
-                );
                 pass.draw_indexed(0..6, 0, 0..(GRID_SIZE_X * GRID_SIZE_Y) as u32);
 
                 pass.pop_debug_group();
