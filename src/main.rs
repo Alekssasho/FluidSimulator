@@ -4,7 +4,7 @@ use egui_winit_platform::{Platform, PlatformDescriptor};
 use glam::UVec2;
 use winit::{dpi::LogicalSize, event::Event::*, event_loop::ControlFlow};
 
-mod velocity_field_routine;
+mod fluid_simulator;
 
 fn main() {
     // Create event loop and window
@@ -54,8 +54,8 @@ fn main() {
         window.scale_factor() as f32,
     );
 
-    let mut velocity_field_routine =
-        velocity_field_routine::VelocityFieldRoutine::new(&renderer, format);
+    let mut fluid_simulator_routine =
+        fluid_simulator::FluidSimulator::new(&renderer, format);
 
     let camera_pitch = std::f32::consts::FRAC_PI_4;
     let camera_yaw = -std::f32::consts::FRAC_PI_4;
@@ -84,6 +84,7 @@ fn main() {
 
     let start_time = Instant::now();
 
+    let mut show_velocity_field = false;
     event_loop.run(move |event, _, control_flow| {
         // Pass the winit events to the platform integration.
         platform.handle_event(&event);
@@ -93,23 +94,25 @@ fn main() {
                 platform.update_time(start_time.elapsed().as_secs_f64());
                 platform.begin_frame();
 
-                // Insert egui commands here
                 let ctx = platform.context();
                 egui::Window::new("Settings")
                     .resizable(true)
                     .show(&ctx, |ui| {
-                        ui.add(
-                            egui::DragValue::new(&mut velocity_field_routine.forced_velocity.x)
-                                .speed(0.05)
-                                .clamp_range(-1.0..=1.0)
-                                .prefix("x:"),
-                        );
-                        ui.add(
-                            egui::DragValue::new(&mut velocity_field_routine.forced_velocity.y)
-                                .speed(0.05)
-                                .clamp_range(-1.0..=1.0)
-                                .prefix("y:"),
-                        );
+                        ui.checkbox(&mut &mut show_velocity_field, "Visuzlize Velocity");
+                        if show_velocity_field {
+                            ui.add(
+                                egui::DragValue::new(&mut fluid_simulator_routine.forced_velocity.x)
+                                    .speed(0.05)
+                                    .clamp_range(-1.0..=1.0)
+                                    .prefix("x:"),
+                            );
+                            ui.add(
+                                egui::DragValue::new(&mut fluid_simulator_routine.forced_velocity.y)
+                                    .speed(0.05)
+                                    .clamp_range(-1.0..=1.0)
+                                    .prefix("y:"),
+                            );
+                        }
                     });
 
                 // End the UI frame. Now let's draw the UI with our Backend, we could also handle the output here
@@ -132,7 +135,11 @@ fn main() {
                 // Build a rendergraph
                 let mut graph = rend3::RenderGraph::new();
 
-                velocity_field_routine.add_to_graph(&mut graph);
+
+                fluid_simulator_routine.add_forces_in_field_to_graph(&mut graph);
+                if show_velocity_field {
+                    fluid_simulator_routine.add_velocity_visualization_to_graph(&mut graph);
+                }
 
                 // Add egui on top of all the other passes
                 egui_routine.add_to_graph(&mut graph, input);

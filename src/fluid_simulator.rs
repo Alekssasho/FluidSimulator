@@ -4,7 +4,7 @@ use wgpu::{util::DeviceExt, ComputePipelineDescriptor, PushConstantRange, Shader
 const GRID_SIZE_X: usize = 20;
 const GRID_SIZE_Y: usize = 20;
 const VELOCITY_BUFFER_SIZE: usize = GRID_SIZE_X * GRID_SIZE_Y * std::mem::size_of::<glam::Vec2>();
-pub struct VelocityFieldRoutine {
+pub struct FluidSimulator {
     render_pipeline: wgpu::RenderPipeline,
     compute_pipeline: wgpu::ComputePipeline,
     uniform_bind_group: wgpu::BindGroup,
@@ -27,7 +27,7 @@ struct ConstantsData {
 unsafe impl bytemuck::Pod for ConstantsData {}
 unsafe impl bytemuck::Zeroable for ConstantsData {}
 
-impl VelocityFieldRoutine {
+impl FluidSimulator {
     pub fn new(renderer: &rend3::Renderer, surface_format: wgpu::TextureFormat) -> Self {
         let dxc = hassle_rs::Dxc::new().unwrap();
         let compiler = dxc.create_compiler().unwrap();
@@ -324,16 +324,14 @@ impl VelocityFieldRoutine {
         }
     }
 
-    pub fn add_to_graph<'node>(&'node mut self, graph: &mut rend3::RenderGraph<'node>) {
-        let mut builder = graph.add_node("velocity_field_visualize");
+    pub fn add_forces_in_field_to_graph<'node>(&'node self, graph: &mut rend3::RenderGraph<'node>) {
+        let mut builder = graph.add_node("fluid_simulator_add_forces_and_density");
 
-        let output_handle = builder.add_surface_output();
+        let _data_output = builder.add_data_output::<_, wgpu::Buffer>("Fluid Fields");
 
         builder.build(
-            move |_pt, _renderer, encoder_or_pass, _temps, _ready, graph_data| {
+            move |_pt, _renderer, encoder_or_pass, _temps, _ready, _graph_data| {
                 let encoder = encoder_or_pass.get_encoder();
-
-                let output = graph_data.get_render_target(output_handle);
 
                 let mut c_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("velocity_calculation_compute_pass"),
@@ -346,7 +344,23 @@ impl VelocityFieldRoutine {
                 c_pass.dispatch((VELOCITY_BUFFER_SIZE as u32 + 31) / 32, 1, 1);
                 c_pass.pop_debug_group();
 
-                drop(c_pass);
+                //graph_data.set_data(data_output, Some(&self._velocity_buffer));
+            },
+        );
+    }
+
+
+    pub fn add_velocity_visualization_to_graph<'node>(&'node self, graph: &mut rend3::RenderGraph<'node>) {
+        let mut builder = graph.add_node("velocity_field_visualize");
+
+        let output_handle = builder.add_surface_output();
+        let _data_input_handle = builder.add_data_input::<_, wgpu::Buffer>("Fluid Fields");
+
+        builder.build(
+            move |_pt, _renderer, encoder_or_pass, _temps, _ready, graph_data| {
+                let encoder = encoder_or_pass.get_encoder();
+
+                let output = graph_data.get_render_target(output_handle);
 
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     color_attachments: &[wgpu::RenderPassColorAttachment {
