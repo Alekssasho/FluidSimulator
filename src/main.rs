@@ -54,8 +54,7 @@ fn main() {
         window.scale_factor() as f32,
     );
 
-    let mut fluid_simulator_routine =
-        fluid_simulator::FluidSimulator::new(&renderer, format);
+    let mut fluid_simulator_routine = fluid_simulator::FluidSimulator::new(&renderer, format);
 
     let camera_pitch = std::f32::consts::FRAC_PI_4;
     let camera_yaw = -std::f32::consts::FRAC_PI_4;
@@ -101,18 +100,31 @@ fn main() {
                         ui.checkbox(&mut &mut show_velocity_field, "Visuzlize Velocity");
                         if show_velocity_field {
                             ui.add(
-                                egui::DragValue::new(&mut fluid_simulator_routine.forced_velocity.x)
-                                    .speed(0.05)
-                                    .clamp_range(-1.0..=1.0)
-                                    .prefix("x:"),
+                                egui::DragValue::new(
+                                    &mut fluid_simulator_routine.forced_velocity.x,
+                                )
+                                .speed(0.05)
+                                .clamp_range(-1.0..=1.0)
+                                .prefix("x:"),
                             );
                             ui.add(
-                                egui::DragValue::new(&mut fluid_simulator_routine.forced_velocity.y)
-                                    .speed(0.05)
-                                    .clamp_range(-1.0..=1.0)
-                                    .prefix("y:"),
+                                egui::DragValue::new(
+                                    &mut fluid_simulator_routine.forced_velocity.y,
+                                )
+                                .speed(0.05)
+                                .clamp_range(-1.0..=1.0)
+                                .prefix("y:"),
                             );
                         }
+
+                        ui.add(
+                            egui::DragValue::new(
+                                &mut fluid_simulator_routine.forced_density,
+                            )
+                            .speed(0.05)
+                            .clamp_range(0.0..=1.0)
+                            .prefix("density:"),
+                        );
                     });
 
                 // End the UI frame. Now let's draw the UI with our Backend, we could also handle the output here
@@ -135,10 +147,11 @@ fn main() {
                 // Build a rendergraph
                 let mut graph = rend3::RenderGraph::new();
 
-
                 fluid_simulator_routine.add_forces_in_field_to_graph(&mut graph);
                 if show_velocity_field {
                     fluid_simulator_routine.add_velocity_visualization_to_graph(&mut graph);
+                } else {
+                    fluid_simulator_routine.add_density_visualization_to_graph(&mut graph);
                 }
 
                 // Add egui on top of all the other passes

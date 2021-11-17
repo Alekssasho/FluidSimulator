@@ -1,5 +1,6 @@
 struct PushConstantData {
     float2 forced_velocity;
+    float forced_density;
 };
 
 [[vk::push_constant]] PushConstantData g_push_data;
@@ -11,6 +12,7 @@ struct ConstantsData {
 ConstantBuffer<ConstantsData> g_constant_data : register(b0);
 
 RWStructuredBuffer<float2> g_velocity_field : register(u1);
+RWStructuredBuffer<float> g_density_field : register(u2);
 
 [numthreads(32, 1, 1)]
 void cs_main(uint3 tid : SV_DispatchThreadID) {
@@ -20,4 +22,5 @@ void cs_main(uint3 tid : SV_DispatchThreadID) {
     }
 
     g_velocity_field[tid.x] = g_push_data.forced_velocity;
+    g_density_field[tid.x] = g_push_data.forced_density;
 }
