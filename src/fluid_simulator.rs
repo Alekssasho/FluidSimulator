@@ -1,8 +1,8 @@
 use glam::{vec2, Vec2};
-use wgpu::{util::DeviceExt, ComputePipelineDescriptor, PushConstantRange, ShaderStages};
+use wgpu::{ComputePipelineDescriptor, Device, PushConstantRange, ShaderStages, util::DeviceExt};
 
-const GRID_SIZE_X: usize = 20;
-const GRID_SIZE_Y: usize = 20;
+const GRID_SIZE_X: usize = 200;
+const GRID_SIZE_Y: usize = 200;
 const VELOCITY_BUFFER_SIZE: usize = GRID_SIZE_X * GRID_SIZE_Y * std::mem::size_of::<glam::Vec2>();
 pub struct FluidSimulator {
     render_pipeline: wgpu::RenderPipeline,
@@ -14,6 +14,7 @@ pub struct FluidSimulator {
     index_buffer: wgpu::Buffer,
     _velocity_buffer: wgpu::Buffer,
     _constants_buffer: wgpu::Buffer,
+    _density_buffer: wgpu::Buffer,
 
     pub forced_velocity: Vec2,
     pub forced_density: f32,
@@ -41,12 +42,14 @@ unsafe impl bytemuck::Zeroable for PushConstants {}
 
 impl FluidSimulator {
     fn compile_shader(
+        device: &Device,
         compiler: &hassle_rs::DxcCompiler,
         library: &hassle_rs::DxcLibrary,
         blob: &hassle_rs::DxcBlobEncoding,
+        name: &str,
         entry_point: &str,
         profile: &str,
-    ) -> Vec<u8> {
+    ) -> wgpu::ShaderModule {
         let result = match compiler.compile(
             &blob,
             "Shader",
@@ -67,65 +70,40 @@ impl FluidSimulator {
                 panic!();
             }
         };
-        result.get_result().unwrap().to_vec()
+        let code = result.get_result().unwrap().to_vec();
+        let shader = wgpu::ShaderModuleDescriptor {
+            label: Some(name),
+            source: wgpu::util::make_spirv(code.as_slice()),
+        };
+        device.create_shader_module(&shader)
     }
 
     pub fn new(renderer: &rend3::Renderer, surface_format: wgpu::TextureFormat) -> Self {
         let dxc = hassle_rs::Dxc::new().unwrap();
         let compiler = dxc.create_compiler().unwrap();
         let library = dxc.create_library().unwrap();
+        let device: &wgpu::Device = &renderer.device;
         let blob = library
             .create_blob_with_encoding_from_str(include_str!("shaders/velocity_field.hlsl"))
             .unwrap();
-        let vs_code =
-            FluidSimulator::compile_shader(&compiler, &library, &blob, "vs_main", "vs_6_6");
-        let ps_code =
-            FluidSimulator::compile_shader(&compiler, &library, &blob, "ps_main", "ps_6_6");
+        let vs_module =
+            FluidSimulator::compile_shader(device, &compiler, &library, &blob, "velocity_field_vs_shader", "vs_main", "vs_6_6");
+        let ps_module =
+            FluidSimulator::compile_shader(device, &compiler, &library, &blob, "velocity_field_ps_shader", "ps_main", "ps_6_6");
 
         let blob = library
-            .create_blob_with_encoding_from_str(include_str!("shaders/velocity_calculations.hlsl"))
+            .create_blob_with_encoding_from_str(include_str!("shaders/add_force.hlsl"))
             .unwrap();
-        let cs_code =
-            FluidSimulator::compile_shader(&compiler, &library, &blob, "cs_main", "cs_6_6");
+        let cs_module =
+            FluidSimulator::compile_shader(device, &compiler, &library, &blob, "add_force_cs_shader", "cs_main", "cs_6_6");
 
         let blob = library
             .create_blob_with_encoding_from_str(include_str!("shaders/density_visualize.hlsl"))
             .unwrap();
-        let vs_density_code =
-            FluidSimulator::compile_shader(&compiler, &library, &blob, "vs_main", "vs_6_6");
-        let ps_density_code =
-            FluidSimulator::compile_shader(&compiler, &library, &blob, "ps_main", "ps_6_6");
-
-        let device: &wgpu::Device = &renderer.device;
-        let vs_shader = wgpu::ShaderModuleDescriptor {
-            label: Some("velocity_field_vs_shader"),
-            source: wgpu::util::make_spirv(vs_code.as_slice()),
-        };
-        let vs_module = device.create_shader_module(&vs_shader);
-
-        let ps_shader = wgpu::ShaderModuleDescriptor {
-            label: Some("velocity_field_ps_shader"),
-            source: wgpu::util::make_spirv(ps_code.as_slice()),
-        };
-        let ps_module = device.create_shader_module(&ps_shader);
-
-        let cs_shader = wgpu::ShaderModuleDescriptor {
-            label: Some("velocity_calculation_cs_shader"),
-            source: wgpu::util::make_spirv(cs_code.as_slice()),
-        };
-        let cs_module = device.create_shader_module(&cs_shader);
-
-        let density_vs_shader = wgpu::ShaderModuleDescriptor {
-            label: Some("density_field_vs_shader"),
-            source: wgpu::util::make_spirv(vs_density_code.as_slice()),
-        };
-        let density_vs_module = device.create_shader_module(&density_vs_shader);
-
-        let density_ps_shader = wgpu::ShaderModuleDescriptor {
-            label: Some("density_field_ps_shader"),
-            source: wgpu::util::make_spirv(ps_density_code.as_slice()),
-        };
-        let density_ps_module = device.create_shader_module(&density_ps_shader);
+        let vs_density_module =
+            FluidSimulator::compile_shader(device, &compiler, &library, &blob, "density_field_vs_shader", "vs_main", "vs_6_6");
+        let ps_density_module =
+            FluidSimulator::compile_shader(device, &compiler, &library, &blob, "density_field_ps_shader", "ps_main", "ps_6_6");
 
         let velocity_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("velocity_field_velocity_buffer"),
@@ -356,9 +334,9 @@ impl FluidSimulator {
 
         let render_pipeline = device.create_render_pipeline(&pipeline_description);
 
-        pipeline_description.vertex.module = &density_vs_module;
+        pipeline_description.vertex.module = &vs_density_module;
         pipeline_description.vertex.buffers = &[];
-        pipeline_description.fragment.as_mut().unwrap().module = &density_ps_module;
+        pipeline_description.fragment.as_mut().unwrap().module = &ps_density_module;
         let density_render_pipeline = device.create_render_pipeline(&pipeline_description);
 
         let compute_pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
@@ -399,12 +377,13 @@ impl FluidSimulator {
             index_buffer,
             _velocity_buffer: velocity_buffer,
             _constants_buffer: constants_buffer,
+            _density_buffer: density_buffer,
             forced_velocity: vec2(0.0, 0.0),
             forced_density: 0.0,
         }
     }
 
-    pub fn add_forces_in_field_to_graph<'node>(&'node self, graph: &mut rend3::RenderGraph<'node>) {
+    pub fn add_forces_in_field_to_graph<'node>(&'node self, graph: &mut rend3::RenderGraph<'node>, add_density_here: glam::Vec2) {
         let mut builder = graph.add_node("fluid_simulator_add_forces_and_density");
 
         let _data_output = builder.add_data_output::<_, wgpu::Buffer>("Fluid Fields");
@@ -420,13 +399,34 @@ impl FluidSimulator {
                 c_pass.push_debug_group("velocity_calculation_compute");
                 c_pass.set_pipeline(&self.compute_pipeline);
                 c_pass.set_bind_group(0, &self.compute_uniform_bind_group, &[]);
-                c_pass.set_push_constants(0, bytemuck::cast_slice(&[PushConstants{ forced_velocity: self.forced_velocity, forced_density: self.forced_density }]));
-                c_pass.dispatch((VELOCITY_BUFFER_SIZE as u32 + 31) / 32, 1, 1);
+                c_pass.set_push_constants(0, bytemuck::cast_slice(&[add_density_here]));
+                c_pass.dispatch(1, 1, 1);
                 c_pass.pop_debug_group();
-
-                //graph_data.set_data(data_output, Some(&self._velocity_buffer));
             },
         );
+    }
+
+    pub fn add_solver_to_graph<'node>(&'node self, graph: &mut rend3::RenderGraph<'node>) {
+        let mut builder = graph.add_node("fluid_simulator_solver");
+
+        let _data_output = builder.add_data_output::<_, wgpu::Buffer>("Fluid Fields");
+
+        // builder.build(
+        //     move |_pt, _renderer, encoder_or_pass, _temps, _ready, _graph_data| {
+        //         let encoder = encoder_or_pass.get_encoder();
+
+        //         let mut c_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+        //             label: Some("velocity_calculation_compute_pass"),
+        //         });
+
+        //         c_pass.push_debug_group("velocity_calculation_compute");
+        //         c_pass.set_pipeline(&self.compute_pipeline);
+        //         c_pass.set_bind_group(0, &self.compute_uniform_bind_group, &[]);
+        //         c_pass.set_push_constants(0, bytemuck::cast_slice(&[add_density_here]));
+        //         c_pass.dispatch(1, 1, 1);
+        //         c_pass.pop_debug_group();
+        //     },
+        // );
     }
 
     pub fn add_velocity_visualization_to_graph<'node>(

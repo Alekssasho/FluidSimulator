@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Instant};
 
 use egui_winit_platform::{Platform, PlatformDescriptor};
 use glam::UVec2;
-use winit::{dpi::LogicalSize, event::Event::*, event_loop::ControlFlow};
+use winit::{dpi::LogicalSize, event::{ElementState, Event::*}, event_loop::ControlFlow};
 
 mod fluid_simulator;
 
@@ -84,6 +84,8 @@ fn main() {
     let start_time = Instant::now();
 
     let mut show_velocity_field = false;
+    let mut add_density = false;
+    let mut pointer_pos = glam::vec2(0.0, 0.0);
     event_loop.run(move |event, _, control_flow| {
         // Pass the winit events to the platform integration.
         platform.handle_event(&event);
@@ -147,7 +149,12 @@ fn main() {
                 // Build a rendergraph
                 let mut graph = rend3::RenderGraph::new();
 
-                fluid_simulator_routine.add_forces_in_field_to_graph(&mut graph);
+                if add_density {
+                    fluid_simulator_routine.add_forces_in_field_to_graph(&mut graph, pointer_pos);
+                }
+
+                fluid_simulator_routine.add_solver_to_graph(&mut graph);
+
                 if show_velocity_field {
                     fluid_simulator_routine.add_velocity_visualization_to_graph(&mut graph);
                 } else {
@@ -183,6 +190,20 @@ fn main() {
                 }
                 winit::event::WindowEvent::CloseRequested => {
                     *control_flow = ControlFlow::Exit;
+                },
+                winit::event::WindowEvent::CursorMoved { position, .. } => {
+                    pointer_pos = glam::vec2(
+                        position.x as f32 / window_size.width as f32,
+                        position.y as f32 / window_size.height as f32,
+                    );
+                },
+                winit::event::WindowEvent::MouseInput { state, button, .. } => {
+                    if let winit::event::MouseButton::Left = button {
+                        match state {
+                            ElementState::Pressed => add_density = true,
+                            ElementState::Released => add_density = false,
+                        }
+                    }
                 }
                 _ => {}
             },
