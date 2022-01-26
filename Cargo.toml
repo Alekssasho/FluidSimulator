@@ -6,20 +6,15 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-futures = "0.3"
-glam = "0.20"
+kajiya = { path = "./kajiya/crates/lib/kajiya" }
+kajiya-imgui = { path = "kajiya/crates/lib/kajiya-imgui" }
 
-winit = "0.25.0"
+anyhow = "1.0"
+glam = { version = "0.18", features = ["serde"] }
+winit = "0.25"
+imgui = { version = "0.7" }
 
-egui = "0.15.0"
-egui_winit_platform = "0.11.0"
-
-wgpu = "0.11"
-
-hassle-rs = "0.4.0"
-
-bytemuck = "1.7.2"
-
-rend3 = { git="https://github.com/BVE-Reborn/rend3" }
-rend3-pbr = { git="https://github.com/BVE-Reborn/rend3" }
-rend3-egui = { git="https://github.com/BVE-Reborn/rend3" }
+[patch.crates-io]
+# Official ray-tracing extensions
+rspirv = { git = "https://github.com/gfx-rs/rspirv.git", rev = "dae552c" }
+spirv_headers = { git = "https://github.com/gfx-rs/rspirv.git", rev = "dae552c" }

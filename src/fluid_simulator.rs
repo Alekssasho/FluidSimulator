@@ -1,3 +1,5 @@
+use std::num::NonZeroU32;
+
 use glam::{vec2, Vec2};
 use wgpu::{ComputePipelineDescriptor, Device, PushConstantRange, ShaderStages, util::DeviceExt};
 
@@ -7,6 +9,7 @@ const VELOCITY_BUFFER_SIZE: usize = GRID_SIZE_X * GRID_SIZE_Y * std::mem::size_o
 pub struct FluidSimulator {
     render_pipeline: wgpu::RenderPipeline,
     density_render_pipeline: wgpu::RenderPipeline,
+    compute_pipeline_add_force: wgpu::ComputePipeline,
     compute_pipeline: wgpu::ComputePipeline,
     uniform_bind_group: wgpu::BindGroup,
     compute_uniform_bind_group: wgpu::BindGroup,
@@ -14,7 +17,7 @@ pub struct FluidSimulator {
     index_buffer: wgpu::Buffer,
     _velocity_buffer: wgpu::Buffer,
     _constants_buffer: wgpu::Buffer,
-    _density_buffer: wgpu::Buffer,
+    density_buffers : [wgpu::Buffer; 3],
 
     pub forced_velocity: Vec2,
     pub forced_density: f32,
@@ -94,8 +97,14 @@ impl FluidSimulator {
         let blob = library
             .create_blob_with_encoding_from_str(include_str!("shaders/add_force.hlsl"))
             .unwrap();
-        let cs_module =
+        let cs_module_add_force =
             FluidSimulator::compile_shader(device, &compiler, &library, &blob, "add_force_cs_shader", "cs_main", "cs_6_6");
+
+        let blob = library
+            .create_blob_with_encoding_from_str(include_str!("shaders/velocity_calculations.hlsl"))
+            .unwrap();
+        let cs_module =
+            FluidSimulator::compile_shader(device, &compiler, &library, &blob, "velocity_calculation_cs_shader", "cs_main", "cs_6_6");
 
         let blob = library
             .create_blob_with_encoding_from_str(include_str!("shaders/density_visualize.hlsl"))
@@ -112,12 +121,30 @@ impl FluidSimulator {
             mapped_at_creation: false,
         });
 
-        let density_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("density_field_buffer"),
-            usage: wgpu::BufferUsages::STORAGE,
-            size: (GRID_SIZE_X * GRID_SIZE_Y * std::mem::size_of::<f32>()) as u64,
-            mapped_at_creation: false,
-        });
+        let density_buffers = {
+            let density_buffer_1 = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("density_field_buffer_1"),
+                usage: wgpu::BufferUsages::STORAGE,
+                size: (GRID_SIZE_X * GRID_SIZE_Y * std::mem::size_of::<f32>()) as u64,
+                mapped_at_creation: false,
+            });
+    
+            let density_buffer_2 = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("density_field_buffer_2"),
+                usage: wgpu::BufferUsages::STORAGE,
+                size: (GRID_SIZE_X * GRID_SIZE_Y * std::mem::size_of::<f32>()) as u64,
+                mapped_at_creation: false,
+            });
+
+            let density_buffer_3 = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("density_field_buffer_3"),
+                usage: wgpu::BufferUsages::STORAGE,
+                size: (GRID_SIZE_X * GRID_SIZE_Y * std::mem::size_of::<f32>()) as u64,
+                mapped_at_creation: false,
+            });
+
+            [density_buffer_1, density_buffer_2, density_buffer_3]
+        };
 
         let constants_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("velocity_field_constants_data_buffer"),
@@ -188,7 +215,7 @@ impl FluidSimulator {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &density_buffer,
+                        buffer: &density_buffers[0],
                         offset: 0,
                         size: None,
                     }),
@@ -228,7 +255,7 @@ impl FluidSimulator {
                             min_binding_size: None,
                             ty: wgpu::BufferBindingType::Storage { read_only: false },
                         },
-                        count: None,
+                        count: NonZeroU32::new(3),
                     },
                 ],
             });
@@ -255,11 +282,19 @@ impl FluidSimulator {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &density_buffer,
+                    resource: wgpu::BindingResource::BufferArray(&[wgpu::BufferBinding {
+                        buffer: &density_buffers[0],
                         offset: 0,
                         size: None,
-                    }),
+                    }, wgpu::BufferBinding {
+                        buffer: &density_buffers[1],
+                        offset: 0,
+                        size: None,
+                    }, wgpu::BufferBinding {
+                        buffer: &density_buffers[2],
+                        offset: 0,
+                        size: None,
+                    }]),
                 },
             ],
         });
@@ -339,8 +374,15 @@ impl FluidSimulator {
         pipeline_description.fragment.as_mut().unwrap().module = &ps_density_module;
         let density_render_pipeline = device.create_render_pipeline(&pipeline_description);
 
+        let compute_pipeline_add_force = device.create_compute_pipeline(&ComputePipelineDescriptor {
+            label: Some("add_force"),
+            layout: Some(&compute_pipeline_layout),
+            module: &cs_module_add_force,
+            entry_point: "cs_main",
+        });
+
         let compute_pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
-            label: Some("velocity_calculcation_pipeline"),
+            label: Some("velocity_calculation"),
             layout: Some(&compute_pipeline_layout),
             module: &cs_module,
             entry_point: "cs_main",
@@ -370,6 +412,7 @@ impl FluidSimulator {
         Self {
             render_pipeline,
             density_render_pipeline,
+            compute_pipeline_add_force,
             compute_pipeline,
             uniform_bind_group,
             compute_uniform_bind_group,
@@ -377,7 +420,7 @@ impl FluidSimulator {
             index_buffer,
             _velocity_buffer: velocity_buffer,
             _constants_buffer: constants_buffer,
-            _density_buffer: density_buffer,
+            density_buffers,
             forced_velocity: vec2(0.0, 0.0),
             forced_density: 0.0,
         }
@@ -397,7 +440,7 @@ impl FluidSimulator {
                 });
 
                 c_pass.push_debug_group("velocity_calculation_compute");
-                c_pass.set_pipeline(&self.compute_pipeline);
+                c_pass.set_pipeline(&self.compute_pipeline_add_force);
                 c_pass.set_bind_group(0, &self.compute_uniform_bind_group, &[]);
                 c_pass.set_push_constants(0, bytemuck::cast_slice(&[add_density_here]));
                 c_pass.dispatch(1, 1, 1);
@@ -411,22 +454,31 @@ impl FluidSimulator {
 
         let _data_output = builder.add_data_output::<_, wgpu::Buffer>("Fluid Fields");
 
-        // builder.build(
-        //     move |_pt, _renderer, encoder_or_pass, _temps, _ready, _graph_data| {
-        //         let encoder = encoder_or_pass.get_encoder();
+        builder.build(
+            move |_pt, _renderer, encoder_or_pass, _temps, _ready, _graph_data| {
+                let encoder = encoder_or_pass.get_encoder();
 
-        //         let mut c_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-        //             label: Some("velocity_calculation_compute_pass"),
-        //         });
+                encoder.copy_buffer_to_buffer(&self.density_buffers[0], 0, &self.density_buffers[2], 0, (GRID_SIZE_X * GRID_SIZE_Y * std::mem::size_of::<f32>()) as u64);
 
-        //         c_pass.push_debug_group("velocity_calculation_compute");
-        //         c_pass.set_pipeline(&self.compute_pipeline);
-        //         c_pass.set_bind_group(0, &self.compute_uniform_bind_group, &[]);
-        //         c_pass.set_push_constants(0, bytemuck::cast_slice(&[add_density_here]));
-        //         c_pass.dispatch(1, 1, 1);
-        //         c_pass.pop_debug_group();
-        //     },
-        // );
+                let mut c_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("velocity_calculation_compute_pass"),
+                });
+
+                c_pass.push_debug_group("velocity_calculation_compute");
+                c_pass.set_pipeline(&self.compute_pipeline);
+                c_pass.set_bind_group(0, &self.compute_uniform_bind_group, &[]);
+
+                let mut current_index = 1;
+                let mut prev_index = 0;
+                for _ in 0..20 {
+                    c_pass.set_push_constants(0, bytemuck::cast_slice(&[current_index, prev_index]));
+                    c_pass.dispatch(((GRID_SIZE_X * GRID_SIZE_Y + 31) / 32) as u32, 1, 1);
+                    std::mem::swap(&mut current_index, &mut prev_index);
+                }
+
+                c_pass.pop_debug_group();
+            },
+        );
     }
 
     pub fn add_velocity_visualization_to_graph<'node>(
