@@ -1,3 +1,5 @@
+mod fluid_simulator;
+
 use glam::*;
 use winit::{
     self,
@@ -64,6 +66,8 @@ fn main() -> anyhow::Result<()> {
         kajiya_imgui::ImGuiBackend::new(rg_renderer.device().clone(), &window, &mut imgui);
 
     imgui_backend.create_graphics_resources(swapchain_extent);
+
+    let mut fluid_simulator = fluid_simulator::FluidSimulator::new(rg_renderer.device().clone());
 
     let mut events = Vec::new();
 
@@ -155,14 +159,9 @@ fn main() -> anyhow::Result<()> {
 
         let prepared_frame = {
             rg_renderer.prepare_frame(|rg| {
-                //let main_img = world_renderer.prepare_render_graph(rg, &frame_desc);
+                let main_img = fluid_simulator.prepare_render_graph(rg);
                 let ui_img = ui_renderer.prepare_render_graph(rg);
 
-                let mut main_img = rg.create(ImageDesc::new_2d(
-                    vk::Format::R8G8B8A8_UNORM,
-                    swapchain_extent,
-                ));
-                rg::imageops::clear_color(rg, &mut main_img, [0.0f32; 4]);
                 let mut swap_chain = rg.get_swap_chain();
                 rg::SimpleRenderPass::new_compute(
                     rg.add_pass("final blit"),
