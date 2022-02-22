@@ -10,13 +10,25 @@ use kajiya::{
 
 const GRID_SIZE_X: usize = 200;
 const GRID_SIZE_Y: usize = 200;
+
+#[derive(Clone, Copy)]
+struct ConstantData {
+    grid_size: glam::IVec2,
+}
+
+unsafe impl bytemuck::Pod for ConstantData {}
+unsafe impl bytemuck::Zeroable for ConstantData {}
 pub struct FluidSimulator {
     device: Arc<Device>,
     density_buffer: Arc<Buffer>,
+    constant_data: ConstantData,
 }
 
 impl FluidSimulator {
     pub fn new(device: Arc<Device>) -> Self {
+        let constant_data = ConstantData {
+            grid_size: glam::ivec2(GRID_SIZE_X as i32, GRID_SIZE_Y as i32),
+        };
         let density_buffer = Arc::new(
             device
                 .create_buffer(
@@ -32,6 +44,7 @@ impl FluidSimulator {
         Self {
             device,
             density_buffer,
+            constant_data
         }
     }
 
@@ -52,10 +65,10 @@ impl FluidSimulator {
             rg.add_pass("visualize density"),
             "/shaders-new/density_visualize.hlsl",
         )
+        .constants(self.constant_data)
         .read(&density_buffer)
         .write(&mut main_img)
         .constants((
-            [GRID_SIZE_X, GRID_SIZE_Y],
             [extent[0] as f32, extent[1] as f32],
         ))
         .dispatch([extent[0], extent[1], 1]);

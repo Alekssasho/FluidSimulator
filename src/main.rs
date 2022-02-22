@@ -27,7 +27,7 @@ fn main() -> anyhow::Result<()> {
     set_standard_vfs_mount_points("./kajiya");
     set_vfs_mount_point("/shaders-new", "./shaders");
 
-    //kajiya::logging::set_up_logging(builder.default_log_level)?;
+    kajiya::logging::set_up_logging(log::LevelFilter::Debug)?;
 
     let rendering_width = 1920;
     let rendering_height = 1080;
@@ -52,7 +52,7 @@ fn main() -> anyhow::Result<()> {
         RenderBackendConfig {
             swapchain_extent,
             vsync: true,
-            graphics_debugging: false,
+            graphics_debugging: true,
         },
     )?;
 

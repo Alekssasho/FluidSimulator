@@ -13,6 +13,8 @@ anyhow = "1.0"
 glam = { version = "0.18", features = ["serde"] }
 winit = "0.25"
 imgui = { version = "0.7" }
+bytemuck = "1.7.3"
+log = "0.4"
 
 [patch.crates-io]
 # Official ray-tracing extensions
