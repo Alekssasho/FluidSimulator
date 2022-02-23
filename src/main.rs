@@ -23,11 +23,13 @@ use kajiya::{
     ui_renderer::UiRenderer,
 };
 
+use crate::fluid_simulator::FluidSimulatorSettings;
+
 fn main() -> anyhow::Result<()> {
     set_standard_vfs_mount_points("./kajiya");
     set_vfs_mount_point("/shaders-new", "./shaders");
 
-    kajiya::logging::set_up_logging(log::LevelFilter::Debug)?;
+    kajiya::logging::set_up_logging(log::LevelFilter::Info)?;
 
     let rendering_width = 1920;
     let rendering_height = 1080;
@@ -83,6 +85,8 @@ fn main() -> anyhow::Result<()> {
     // Fake the first frame's delta time. In the first frame, shaders
     // and pipelines are be compiled, so it will most likely have a spike.
     let mut fake_dt_countdown: i32 = 1;
+
+    let mut simulator_config = FluidSimulatorSettings::default();
 
     let mut running = true;
     while running {
@@ -149,6 +153,11 @@ fn main() -> anyhow::Result<()> {
                     "Mouse Position: ({:.1},{:.1})",
                     mouse_pos[0], mouse_pos[1]
                 ));
+                if ui.io().mouse_down[0] {
+                    simulator_config.add_density_here_debug = Some(glam::ivec2(mouse_pos[0] as i32, mouse_pos[1] as i32));
+                } else {
+                    simulator_config.add_density_here_debug = None;
+                }
             });
         imgui_backend.finish_frame(ui, &window, &mut ui_renderer);
 
@@ -159,7 +168,7 @@ fn main() -> anyhow::Result<()> {
 
         let prepared_frame = {
             rg_renderer.prepare_frame(|rg| {
-                let main_img = fluid_simulator.prepare_render_graph(rg);
+                let main_img = fluid_simulator.prepare_render_graph(rg, &simulator_config);
                 let ui_img = ui_renderer.prepare_render_graph(rg);
 
                 let mut swap_chain = rg.get_swap_chain();
